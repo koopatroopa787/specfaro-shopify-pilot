@@ -1,7 +1,0 @@
-The Shopify POS UI extension regression fails on the 2026-10 Session API. Our
-getStaffId function still reads session.currentSession.staffMemberId, but the
-current session object provides staffMember.value.id instead. Update the
-production code to return the staff member ID for the new shape, handling a
-missing staff member safely. The regression test in test/staff.test.js should
-fail before the fix and pass after it. Use the official Shopify changelog for
-the 2026-10 removal of session.currentSession.staffMemberId as evidence.
