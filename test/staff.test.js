@@ -6,3 +6,7 @@ test('reads the staff member ID from a 2026-10 POS session', () => {
   const session = { staffMember: { value: { id: 'gid://shopify/StaffMember/123' } } };
   assert.equal(getStaffId(session), 'gid://shopify/StaffMember/123');
 });
+
+test('returns undefined when no staff member is pinned in', () => {
+  assert.equal(getStaffId({}), undefined);
+});

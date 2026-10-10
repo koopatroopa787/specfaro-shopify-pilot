@@ -41,7 +41,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --max-time 30 \
             https://dotte.duckdns.org/specfaro-local-kit.zip -o "$RUNNER_TEMP/kit.zip"
-          echo 'fbc4cb323fa3a87fa80c91263f16963e9b45818c48942d8551ae8d62eb556fb8  '"$RUNNER_TEMP/kit.zip" | sha256sum --check
+          echo '9bda0c5242f62aeb6382e2dcf9ee2f7ad24442c90771e1f66debd7bea7fad28f  '"$RUNNER_TEMP/kit.zip" | sha256sum --check
           unzip -q "$RUNNER_TEMP/kit.zip" -d "$RUNNER_TEMP/kit"
       - name: Reproduce, propose, and validate
         shell: bash
@@ -91,7 +91,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --max-time 30 \
             https://dotte.duckdns.org/specfaro-local-kit.zip -o "$RUNNER_TEMP/kit.zip"
-          echo 'fbc4cb323fa3a87fa80c91263f16963e9b45818c48942d8551ae8d62eb556fb8  '"$RUNNER_TEMP/kit.zip" | sha256sum --check
+          echo '9bda0c5242f62aeb6382e2dcf9ee2f7ad24442c90771e1f66debd7bea7fad28f  '"$RUNNER_TEMP/kit.zip" | sha256sum --check
           unzip -q "$RUNNER_TEMP/kit.zip" -d "$RUNNER_TEMP/kit"
       - name: Validate artifact and open draft PR
         shell: bash
