@@ -1,0 +1,5 @@
+{
+  "regression": ["node", "--test", "test/staff.test.js"],
+  "build": ["node", "--check", "src/staff.js"],
+  "test": ["node", "--test"]
+}

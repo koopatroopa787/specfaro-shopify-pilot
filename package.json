@@ -1,0 +1,9 @@
+{
+  "name": "specfaro-pilot-shopify-pos",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node --check src/staff.js",
+    "test": "node --test"
+  }
+}
