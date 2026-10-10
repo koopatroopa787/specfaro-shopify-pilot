@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node --check src/staff.js",
+    "build": "node --check src/staff.js && node --check src/assignment.js",
     "test": "node --test"
   }
 }
