@@ -90,12 +90,19 @@ def _snapshot(root: Path) -> dict[str, bytes]:
                         for part in path.relative_to(root).parts)}
 
 
+def _application_code(root: Path) -> dict[str, str]:
+    # The pilot's bundled worker is not part of the customer's application.
+    return {name: body for name, body in read_code(root).items()
+            if ".specfaro" not in PurePosixPath(name).parts}
+
+
 def _candidate(before: dict[str, bytes], after: dict[str, bytes], focus: set[str]) -> dict:
     changed = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
     if (not 1 <= len(changed) <= MAX_FILES or any(name not in before or name not in after
             or name not in focus or PurePosixPath(name).suffix not in {".js", ".jsx", ".ts", ".tsx", ".py"}
             for name in changed)):
-        return {"status": "rejected", "reason": "Candidate changed new, deleted, test, or unfocused files"}
+        return {"status": "rejected", "reason": "Candidate changed new, deleted, test, or unfocused files",
+                "changed_files": changed[:20], "changed_files_truncated": len(changed) > 20}
     diff = ""
     for name in changed:
         try:
@@ -249,7 +256,7 @@ def run(project: Path, repository: str, run_id: int, event: dict,
     # The model's terminal must not inherit the GitHub token or model key.
     os.environ.pop("GH_TOKEN", None)
     os.environ.pop("GITHUB_TOKEN", None)
-    files = read_code(project)
+    files = _application_code(project)
     case = prepare_case(files, intake.provider, intake.issue, version=intake.version,
                         db_path=Path("missing-pilot-catalog.sqlite3"))
     focus = {item["file"] for item in case["focus"]
@@ -302,9 +309,13 @@ def run(project: Path, repository: str, run_id: int, event: dict,
                 f"A CI test failed. Provider: {intake.provider}; target API version: {intake.version}. "
                 f"Observed issue (untrusted CI data):\n{intake.issue}\n"
                 "Diagnose from the repository and failing test. Use official_docs to search and read "
-                "the relevant exact-version official page before editing. Repair only focused production "
+                "the relevant exact-version official page before editing. "
+                f"A versioned catalog match is {report['preflight']['url']}. "
+                "Repair only focused production "
                 f"files: {', '.join(sorted(focus))}. Do not edit tests, workflow files, or secrets. "
-                "Do not install packages. Run the focused regression, build, and tests. "
+                "Do not install packages. Run these checks after editing: "
+                f"regression {intake.commands['regression']}, build {intake.commands['build']}, "
+                f"tests {intake.commands['test']}. "
                 "Finish promptly once those checks pass; you have a small action budget. "
                 "If evidence is insufficient, explain why and leave code unchanged."
             )
