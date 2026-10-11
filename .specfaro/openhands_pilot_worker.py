@@ -304,7 +304,7 @@ def _write(report: dict, output: Path) -> None:
              f"Provider/version: {report.get('provider', 'unknown')} / {report.get('version', 'unknown')}",
              f"Attempts: {len(report.get('attempts', []))}",
              "Live provider check: not run", "",
-             "Only a locally verified candidate can be considered for a later draft PR."]
+             "Publication requires a separate artifact check; the repository owner reviews and merges the draft PR."]
     if report.get("reason"):
         lines.append("Reason: " + report["reason"])
     for source in report.get("sources", []):
