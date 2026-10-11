@@ -93,7 +93,9 @@ class OfficialDocsExecutor(ToolExecutor[OfficialDocsAction, OfficialDocsObservat
                 if not action.query or not 2 <= len(action.query) <= 120 or self.searches >= MAX_SEARCHES:
                     raise ValueError("Invalid query or search budget exhausted")
                 self.searches += 1
-                query = urllib.parse.urlencode({"provider": self.provider, "q": action.query})
+                search_text = (action.query if self.version in action.query
+                               else f"{self.version} {action.query}")
+                query = urllib.parse.urlencode({"provider": self.provider, "q": search_text})
                 raw, _ = _get(CATALOG + "?" + query, {"dotte.duckdns.org"})
                 results = json.loads(raw)["results"][:8]
                 results = [item for item in results

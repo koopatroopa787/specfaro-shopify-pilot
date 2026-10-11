@@ -119,7 +119,7 @@ def _preflight_source(provider: str, version: str, terms: list[str]) -> dict:
     symbols = [term for term in terms if len(term) >= 5
                and any(char.isupper() for char in term[1:]) and term not in NOISE_SYMBOLS]
     for symbol in symbols[:4]:
-        query = urllib.parse.urlencode({"provider": provider, "q": symbol})
+        query = urllib.parse.urlencode({"provider": provider, "q": f"{version} {symbol}"})
         try:
             raw, _ = _get(CATALOG + "?" + query, {"dotte.duckdns.org"})
             results = json.loads(raw).get("results", [])
@@ -151,12 +151,41 @@ def _shopify_pos_guard(source: Path, diff: str, provider: str, version: str,
         ], root, 30)
 
 
+def _stripe_payment_intent_guard(source: Path, diff: str, provider: str,
+                                 version: str, issue: str) -> dict:
+    if not (provider == "stripe" and version == "2022-11-15"
+            and "PaymentIntent" in issue and "src/payment-intent.js" in diff):
+        return {"status": "not_applicable"}
+    with tempfile.TemporaryDirectory(prefix="specfaro-stripe-guard-") as temp:
+        root = Path(temp)
+        _copy_project(source, root)
+        applied = _git_apply(root, diff)
+        if applied["status"] != "passed":
+            return {"status": "failed", "reason": "Could not replay candidate"}
+        return _run_command([
+            "node", "--input-type=module", "-e",
+            "import {latestChargeId} from './src/payment-intent.js'; "
+            "const intent={latest_charge:null,charges:{data:[{id:'ch_legacy'}]}}; "
+            "if (latestChargeId(intent)!==undefined) "
+            "throw new Error('Removed charges field must not be used as fallback');",
+        ], root, 30)
+
+
+def _semantic_guard(source: Path, diff: str, provider: str, version: str,
+                    issue: str) -> dict:
+    for guard in (_shopify_pos_guard, _stripe_payment_intent_guard):
+        result = guard(source, diff, provider, version, issue)
+        if result["status"] != "not_applicable":
+            return result
+    return {"status": "not_applicable"}
+
+
 def _attempt_verification(source: Path, candidate: dict, commands: dict,
                           case: dict, evidence_ok: bool) -> dict:
     if candidate.get("status") != "candidate_unverified":
         return {"overall": "failed", "reason": candidate.get("reason", "No candidate")}
     verification = verify_case(source, candidate, commands, timeout=120, case=case)
-    verification["checks"]["semantic_guard"] = _shopify_pos_guard(
+    verification["checks"]["semantic_guard"] = _semantic_guard(
         source, candidate["diff"], case["provider"], case["version"], case["issue"])
     verification["official_source"] = "passed" if evidence_ok else "failed"
     if (verification["overall"] == "validated_locally" and
@@ -326,6 +355,7 @@ def _write(report: dict, output: Path) -> None:
         (output / "candidate.patch").write_bytes(patch)
         manifest = {"status": "validated_locally", "repository": report["repository"],
                     "run_id": report["run_id"], "base_sha": report["base_sha"],
+                    "provider": report["provider"], "version": report["version"],
                     "patch_sha256": hashlib.sha256(patch).hexdigest()}
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n",
                                                encoding="utf-8")

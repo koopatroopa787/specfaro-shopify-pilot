@@ -17,6 +17,10 @@ from urllib.parse import urlparse
 from verify import _patch_paths
 
 
+PILOT_VERSIONS = {"shopify": "2026-10", "stripe": "2022-11-15"}
+OFFICIAL_HOST = {"shopify": "shopify.dev", "stripe": "docs.stripe.com"}
+
+
 def _json_file(path: Path, limit: int) -> dict:
     if not path.is_file() or path.stat().st_size > limit:
         raise ValueError(f"Missing or oversized artifact: {path.name}")
@@ -55,9 +59,13 @@ def validate_artifact(project: Path, bundle: Path, repository: str,
             or manifest.get("base_sha") != base_sha
             or report.get("run_id") != failed_run_id
             or manifest.get("run_id") != failed_run_id
+            or manifest.get("provider") != report.get("provider")
+            or manifest.get("version") != report.get("version")
             or manifest.get("patch_sha256") != hashlib.sha256(patch).hexdigest()):
         raise ValueError("Artifact status, run, base revision, or checksum mismatch")
-    if (report.get("provider") != "shopify" or report.get("version") != "2026-10"
+    provider = report.get("provider")
+    version = report.get("version")
+    if (provider not in PILOT_VERSIONS or version != PILOT_VERSIONS[provider]
             or report.get("preflight", {}).get("status") != "matched"
             or report.get("baseline", {}).get("status") != "reproduced"):
         raise ValueError("Pilot provider, version, preflight, or baseline is invalid")
@@ -68,12 +76,13 @@ def validate_artifact(project: Path, bundle: Path, repository: str,
         raise ValueError("Exact-version official documentation evidence is missing")
     eligible = {(item.get("url"), item.get("sha256")) for item in evidence
                 if isinstance(item, dict) and item.get("eligible") is True
-                and item.get("requested_version") == "2026-10"
+                and item.get("provider") == provider
+                and item.get("requested_version") == version
                 and item.get("version_match") is True
                 and item.get("surface_match") is True}
     for source in sources:
-        if (not isinstance(source, dict) or source.get("version") != "2026-10"
-                or urlparse(source.get("url", "")).hostname != "shopify.dev"
+        if (not isinstance(source, dict) or source.get("version") != version
+                or urlparse(source.get("url", "")).hostname != OFFICIAL_HOST[provider]
                 or not re.fullmatch(r"[0-9a-f]{64}", source.get("sha256", ""))
                 or (source["url"], source["sha256"]) not in eligible):
             raise ValueError("Source does not match eligible official evidence")
@@ -103,7 +112,8 @@ def validate_artifact(project: Path, bundle: Path, repository: str,
                    or PurePosixPath(path).suffix not in {".js", ".jsx", ".ts", ".tsx"}
                    for path in paths)):
         raise ValueError("Patch paths exceed the focused production files")
-    if not set(proposal.get("source_urls", [])) <= {source["url"] for source in sources}:
+    cited = proposal.get("source_urls")
+    if not isinstance(cited, list) or not cited or not set(cited) <= {source["url"] for source in sources}:
         raise ValueError("Proposal cites unverified sources")
     return paths
 
