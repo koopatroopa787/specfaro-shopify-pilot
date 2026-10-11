@@ -20,6 +20,7 @@ import urllib.parse
 
 from pydantic import SecretStr
 from openhands.sdk import Agent, Conversation, LLM
+from openhands.sdk.context.condenser import LLMSummarizingCondenser
 from openhands.sdk.conversation.exceptions import ConversationRunError
 from openhands.sdk.tool import Tool
 from openhands.tools.file_editor import FileEditorTool
@@ -40,6 +41,9 @@ MAX_CHANGED_LINES = 120
 MAX_ATTEMPTS = 2
 MAX_TOTAL_PROMPT_TOKENS = 225_000
 MAX_TOTAL_SECONDS = 300
+CONTEXT_MAX_EVENTS = 18
+CONTEXT_MAX_TOKENS = 30_000
+CONTEXT_KEEP_FIRST = 4
 NOISE_SYMBOLS = {"TestContext", "TypeError", "GitHub", "Subtest", "failureType",
                  "testCodeFailure", "AssertionError"}
 
@@ -68,6 +72,15 @@ class BudgetedLLM(LLM):
         if spent + projected > MAX_TOTAL_PROMPT_TOKENS:
             raise PromptBudgetReached("Projected prompt token budget reached")
         return super().completion(messages, tools=tools, **kwargs)
+
+
+def _condenser(llm: BudgetedLLM) -> LLMSummarizingCondenser:
+    # Share the exact LLM instance so summary calls count against the same
+    # prompt budget and appear in the same usage metrics as repair calls.
+    return LLMSummarizingCondenser(
+        llm=llm, max_size=CONTEXT_MAX_EVENTS,
+        max_tokens=CONTEXT_MAX_TOKENS, keep_first=CONTEXT_KEEP_FIRST,
+    )
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:
@@ -249,7 +262,11 @@ def run(project: Path, repository: str, run_id: int, event: dict,
               "issue": intake.issue, "focus": [{"file": name} for name in sorted(focus)],
               "sources": [], "doc_evidence": [], "attempts": [],
               "baseline": {"status": "not_run"}, "execution": "ephemeral_actions_runner",
-              "live_provider_check": "not_run"}
+              "live_provider_check": "not_run",
+              "context_management": {"strategy": "llm_summarizing",
+                                     "max_events": CONTEXT_MAX_EVENTS,
+                                     "max_tokens": CONTEXT_MAX_TOKENS,
+                                     "keep_first": CONTEXT_KEEP_FIRST}}
     if not focus:
         report.update(status="intake_abstained", reason="No focused production code")
         return report
@@ -274,7 +291,7 @@ def run(project: Path, repository: str, run_id: int, event: dict,
             Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name),
             Tool(name=OfficialDocsTool.name, params={"provider": intake.provider,
                  "version": intake.version, "evidence_path": str(evidence_path)}),
-        ])
+        ], condenser=_condenser(llm))
         actions = []
         conv = Conversation(agent, workspace=workspace, max_iteration_per_run=10,
                             callbacks=[lambda event: actions.append(type(event).__name__)],
@@ -337,6 +354,7 @@ def run(project: Path, repository: str, run_id: int, event: dict,
                 "completion_tokens": usage.completion_tokens if usage else None,
                 "cost_usd": None,  # LiteLLM has no mapping for this exact DeepSeek model.
                 "tool_actions": actions.count("ActionEvent"),
+                "condensations": actions.count("Condensation"),
             }
             conv.close()
     return report
