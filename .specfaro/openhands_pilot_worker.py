@@ -200,7 +200,8 @@ def run(project: Path, repository: str, run_id: int, event: dict,
                         for part in PurePosixPath(item["file"]).parts)
              and ".test." not in item["file"]}
     report = {"harness": "openhands-sdk-1.54.0", "status": "not_run", "repository": repository,
-              "base_sha": base_sha, "provider": intake.provider, "version": intake.version,
+              "run_id": run_id, "base_sha": base_sha, "provider": intake.provider,
+              "version": intake.version,
               "issue": intake.issue, "focus": [{"file": name} for name in sorted(focus)],
               "sources": [], "doc_evidence": [], "attempts": [],
               "baseline": {"status": "not_run"}, "execution": "ephemeral_actions_runner",
@@ -308,11 +309,26 @@ def _write(report: dict, output: Path) -> None:
         lines.append("Reason: " + report["reason"])
     for source in report.get("sources", []):
         lines.append(f"Official source: {source['url']} (SHA-256 {source['sha256']})")
+    if report.get("attempts"):
+        final = report["attempts"][-1]
+        checks = final.get("verification", {}).get("checks", {})
+        lines.extend(["", "## Independent checks",
+                      f"Baseline regression: {report.get('baseline', {}).get('status', 'not_run')}",
+                      f"Patch replay: {final.get('verification', {}).get('patch', {}).get('status', 'not_run')}",
+                      f"Regression after patch: {final.get('verification', {}).get('regression', {}).get('after', {}).get('status', 'not_run')}",
+                      f"Build: {checks.get('build', {}).get('status', 'not_run')}",
+                      f"Full tests: {checks.get('test', {}).get('status', 'not_run')}",
+                      f"Held-out semantic guard: {checks.get('semantic_guard', {}).get('status', 'not_run')}",
+                      "", "No live Shopify store response was checked. Review and merge remain with the repository owner."])
     (output / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     if report["status"] == "validated_locally":
-        (output / "candidate.patch").write_text(report["attempts"][-1]["proposal"]["diff"],
-                                                  encoding="utf-8")
-        # No manifest is created in the read-only evaluation stage.
+        patch = report["attempts"][-1]["proposal"]["diff"].encode("utf-8")
+        (output / "candidate.patch").write_bytes(patch)
+        manifest = {"status": "validated_locally", "repository": report["repository"],
+                    "run_id": report["run_id"], "base_sha": report["base_sha"],
+                    "patch_sha256": hashlib.sha256(patch).hexdigest()}
+        (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n",
+                                               encoding="utf-8")
 
 
 def main() -> int:
