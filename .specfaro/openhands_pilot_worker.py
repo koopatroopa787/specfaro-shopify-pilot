@@ -37,10 +37,24 @@ MODEL_ENDPOINT = "https://api.deepseek.com"
 MAX_PATCH = 20_000
 MAX_CHANGED_LINES = 120
 MAX_ATTEMPTS = 2
-MAX_TOTAL_PROMPT_TOKENS = 200_000
+MAX_TOTAL_PROMPT_TOKENS = 225_000
 MAX_TOTAL_SECONDS = 300
 NOISE_SYMBOLS = {"TestContext", "TypeError", "GitHub", "Subtest", "failureType",
                  "testCodeFailure", "AssertionError"}
+
+
+class PromptBudgetReached(RuntimeError):
+    """Stop before another model request would exceed the pilot token allowance."""
+
+
+class BudgetedLLM(LLM):
+    def completion(self, messages, tools=None, **kwargs):
+        usage = self.metrics.get_snapshot().accumulated_token_usage
+        spent = usage.prompt_tokens if usage else 0
+        projected = self.get_token_count(messages, tools=tools) + 1_024
+        if spent + projected > MAX_TOTAL_PROMPT_TOKENS:
+            raise PromptBudgetReached("Projected prompt token budget reached")
+        return super().completion(messages, tools=tools, **kwargs)
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:
@@ -208,7 +222,7 @@ def run(project: Path, repository: str, run_id: int, event: dict,
         _copy_project(project, workspace)
         before = _snapshot(workspace)
         evidence_path = output / "official-doc-evidence.jsonl"
-        llm = LLM(model=MODEL, base_url=MODEL_ENDPOINT, api_key=SecretStr(api_key),
+        llm = BudgetedLLM(model=MODEL, base_url=MODEL_ENDPOINT, api_key=SecretStr(api_key),
                   reasoning_effort=None, prompt_cache_retention=None, num_retries=1,
                   timeout=45, max_output_tokens=1024, usage_id="specfaro-openhands")
         agent = Agent(llm=llm, tools=[
@@ -233,7 +247,11 @@ def run(project: Path, repository: str, run_id: int, event: dict,
                 "If evidence is insufficient, explain why and leave code unchanged."
             )
             for number in range(1, MAX_ATTEMPTS + 1):
-                conv.run()
+                try:
+                    conv.run()
+                except PromptBudgetReached:
+                    report["status"] = "budget_exhausted"
+                    break
                 candidate = _candidate(before, _snapshot(workspace), focus)
                 evidence, evidence_ok = _source_evidence(
                     evidence_path, intake.provider, intake.version, case["terms"])
