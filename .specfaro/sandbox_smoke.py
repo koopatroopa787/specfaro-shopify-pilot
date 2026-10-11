@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from repair_sandbox import DockerCommandRunner
+from sandbox_runtime import DockerCommandRunner
 
 
 def main() -> None:

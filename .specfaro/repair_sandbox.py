@@ -6,12 +6,7 @@ official-doc tool, patch policy, and Docker socket outside the container.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-import shutil
-import subprocess
-import time
-import uuid
 
 from openhands.sdk.tool import ToolExecutor, register_tool
 from openhands.tools.file_editor.definition import FileEditorAction, FileEditorObservation, FileEditorTool
@@ -19,81 +14,9 @@ from openhands.tools.file_editor.impl import FileEditorExecutor
 from openhands.tools.terminal.definition import TerminalAction, TerminalObservation, TerminalTool
 from openhands.tools.terminal.metadata import CmdOutputMetadata
 
+from sandbox_runtime import DEFAULT_IMAGE, MAX_OUTPUT_CHARS, DockerCommandRunner, SandboxUnavailable
 
-DEFAULT_IMAGE = "node:22-bookworm-slim"
 MAX_TERMINAL_SECONDS = 120
-MAX_OUTPUT_CHARS = 8_000
-
-
-class SandboxUnavailable(RuntimeError):
-    """The required container boundary could not be established."""
-
-
-class DockerCommandRunner:
-    def __init__(self, image: str = DEFAULT_IMAGE):
-        if os.name != "posix" or not hasattr(os, "getuid"):
-            raise SandboxUnavailable("Docker repair isolation requires a Linux runner")
-        self.docker = shutil.which("docker")
-        if not self.docker:
-            raise SandboxUnavailable("Docker CLI is unavailable")
-        if not image or any(char.isspace() for char in image):
-            raise SandboxUnavailable("Invalid sandbox image")
-        self.image = image
-
-    def _invoke(self, workspace: Path, command: list[str], timeout: int) -> dict:
-        root = workspace.resolve(strict=True)
-        if not root.is_dir() or workspace.is_symlink():
-            raise SandboxUnavailable("Sandbox workspace must be a real directory")
-        # The caller's environment contains SPECFARO_DEEPSEEK_API_KEY. Never
-        # inherit it into either the Docker CLI process or the container.
-        client_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                      "HOME": "/tmp", "DOCKER_CONFIG": "/tmp/specfaro-docker-config"}
-        container_name = "specfaro-" + uuid.uuid4().hex[:20]
-        argv = [self.docker, "run", "--rm", "--name", container_name,
-                "--network=none", "--read-only",
-                "--cap-drop=ALL", "--security-opt=no-new-privileges",
-                "--pids-limit=128", "--memory=768m", "--cpus=1",
-                "--user", f"{os.getuid()}:{os.getgid()}",
-                "--workdir", "/workspace",
-                "--tmpfs", "/tmp:rw,nosuid,nodev,size=128m",
-                "--mount", f"type=bind,source={root},target=/workspace",
-                "--env", "HOME=/tmp", "--env", "CI=true",
-                "--env", "npm_config_cache=/tmp/npm-cache",
-                "--env", "PATH=/usr/local/bin:/usr/bin:/bin",
-                self.image, *command]
-        started = time.monotonic()
-        try:
-            result = subprocess.run(argv, cwd=root, env=client_env,
-                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True, errors="replace",
-                                    timeout=timeout, check=False)
-        except subprocess.TimeoutExpired as exc:
-            subprocess.run([self.docker, "rm", "-f", container_name], env=client_env,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=10, check=False)
-            return {"status": "failed", "reason": f"Timed out after {timeout} seconds",
-                    "seconds": round(time.monotonic() - started, 2),
-                    "stdout": str(exc.stdout or "")[-MAX_OUTPUT_CHARS:],
-                    "stderr": str(exc.stderr or "")[-MAX_OUTPUT_CHARS:]}
-        except OSError as exc:
-            return {"status": "failed", "reason": str(exc)[:500],
-                    "seconds": round(time.monotonic() - started, 2),
-                    "stdout": "", "stderr": ""}
-        return {"status": "passed" if result.returncode == 0 else "failed",
-                "exit_code": result.returncode,
-                "seconds": round(time.monotonic() - started, 2),
-                "stdout": result.stdout[-MAX_OUTPUT_CHARS:],
-                "stderr": result.stderr[-MAX_OUTPUT_CHARS:]}
-
-    def run_argv(self, argv: list[str], workspace: Path, timeout: int) -> dict:
-        if not argv or len(argv) > 24 or any(not isinstance(x, str) or not x for x in argv):
-            raise ValueError("Invalid validation command")
-        return self._invoke(workspace, argv, timeout)
-
-    def run_shell(self, command: str, workspace: Path, timeout: int) -> dict:
-        if not command or len(command) > 16_000:
-            raise ValueError("Invalid sandbox shell command")
-        return self._invoke(workspace, ["/bin/sh", "-lc", command], timeout)
 
 
 class SandboxTerminalExecutor(ToolExecutor):
