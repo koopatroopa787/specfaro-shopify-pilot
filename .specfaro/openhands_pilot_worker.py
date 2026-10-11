@@ -16,6 +16,7 @@ import re
 import subprocess
 import tempfile
 import time
+import urllib.parse
 
 from pydantic import SecretStr
 from openhands.sdk import Agent, Conversation, LLM
@@ -27,7 +28,7 @@ from case_agent import _baseline, _summary
 from case_cli import read_code
 from case_repair import MAX_FILES, prepare_case, verify_case
 from failure_intake import IntakeError, derive_intake, fetch_failed_log, validate_event
-from official_docs_tool import OfficialDocsTool
+from official_docs_tool import CATALOG, OfficialDocsTool, _get
 from verify import _copy_project, _git_apply, _run_command
 
 
@@ -36,6 +37,10 @@ MODEL_ENDPOINT = "https://api.deepseek.com"
 MAX_PATCH = 20_000
 MAX_CHANGED_LINES = 120
 MAX_ATTEMPTS = 2
+MAX_TOTAL_PROMPT_TOKENS = 200_000
+MAX_TOTAL_SECONDS = 300
+NOISE_SYMBOLS = {"TestContext", "TypeError", "GitHub", "Subtest", "failureType",
+                 "testCodeFailure", "AssertionError"}
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:
@@ -93,6 +98,24 @@ def _source_evidence(path: Path, provider: str, version: str, terms: list[str]) 
         item.pop("body_excerpt", None)
         evidence.append(item)
     return evidence, any(item["eligible"] for item in evidence)
+
+
+def _preflight_source(provider: str, version: str, terms: list[str]) -> dict:
+    """Require a versioned official result for a concrete API symbol before AI."""
+    symbols = [term for term in terms if len(term) >= 5
+               and any(char.isupper() for char in term[1:]) and term not in NOISE_SYMBOLS]
+    for symbol in symbols[:4]:
+        query = urllib.parse.urlencode({"provider": provider, "q": symbol})
+        try:
+            raw, _ = _get(CATALOG + "?" + query, {"dotte.duckdns.org"})
+            results = json.loads(raw).get("results", [])
+        except (OSError, ValueError, KeyError):
+            return {"status": "unavailable", "reason": "Official catalog search is unavailable"}
+        for item in results[:8]:
+            haystack = " ".join(str(item.get(key, "")) for key in ("url", "title", "excerpt"))
+            if symbol.lower() in haystack.lower() and version in haystack:
+                return {"status": "matched", "symbol": symbol, "url": item.get("url")}
+    return {"status": "no_api_match", "reason": "No versioned official result matched a failing API symbol"}
 
 
 def _shopify_pos_guard(source: Path, diff: str, provider: str, version: str,
@@ -175,6 +198,10 @@ def run(project: Path, repository: str, run_id: int, event: dict,
     if report["baseline"]["status"] != "reproduced":
         report["status"] = "regression_not_reproduced"
         return report
+    report["preflight"] = _preflight_source(intake.provider, intake.version, case["terms"])
+    if report["preflight"]["status"] != "matched":
+        report.update(status="intake_abstained", reason=report["preflight"]["reason"])
+        return report
     with tempfile.TemporaryDirectory(prefix="specfaro-openhands-") as temp:
         workspace = Path(temp) / "project"
         workspace.mkdir()
@@ -225,6 +252,11 @@ def run(project: Path, repository: str, run_id: int, event: dict,
                 if (verification["overall"] == "validated_locally"
                         and not report["attempts"][-1]["other_focus_files"]):
                     report["status"] = "validated_locally"
+                    break
+                usage_so_far = llm.metrics.get_snapshot().accumulated_token_usage
+                if (time.monotonic() - started >= MAX_TOTAL_SECONDS or
+                        (usage_so_far and usage_so_far.prompt_tokens >= MAX_TOTAL_PROMPT_TOKENS)):
+                    report["status"] = "budget_exhausted"
                     break
                 if number < MAX_ATTEMPTS:
                     conv.send_message(_feedback(verification))
