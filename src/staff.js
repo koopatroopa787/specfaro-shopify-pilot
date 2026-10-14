@@ -1,3 +1,3 @@
 export function getStaffId(session) {
-  return session.currentSession.staffMemberId;
+  return session.staffMember?.value?.id;
 }
