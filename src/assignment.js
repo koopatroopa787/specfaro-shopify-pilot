@@ -1,3 +1,4 @@
 export function isAssignedTo(session, staffId) {
-  return session.currentSession.staffMemberId === staffId;
+  const staffMemberId = session.staffMember?.value?.id;
+  return staffMemberId !== undefined && staffMemberId === staffId;
 }
