@@ -1,7 +1,7 @@
 # Specfaro Shopify repair pilot
 
 This public, disposable repository deliberately keeps a Shopify POS Session API
-regression on `main`. The two Node test files exercise staff lookup and
+regression on `main`. The two failing Vitest files exercise staff lookup and
 assignment against the 2026-10 `session.staffMember.value.id` shape. They fail
 on the base commit so an autonomous worker can reproduce the error before
 proposing a patch. Do not use this repository as a production Shopify app.
@@ -29,7 +29,7 @@ proposing a patch. Do not use this repository as a production Shopify app.
 The App uses short-lived, selected-repository tokens. The DeepSeek key stays
 on the Specfaro controller; the private worker uses a job-scoped model gateway.
 The pilot repair PRs are examples, not proof that arbitrary repositories can
-be fixed. The current intake supports up to four discoverable Node test files
+be fixed. The current intake supports up to four discoverable Node or Vitest test files
 for one exact Shopify API version and abstains when evidence is weak.
 
 ## Pilot references
