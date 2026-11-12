@@ -9,4 +9,5 @@ test('matches a pinned staff member in a 2026-10 POS session', () => {
 
 test('never assigns an absent staff member in a 2026-10 POS session', () => {
   expect(isAssignedTo({}, undefined)).toBe(false);
+  expect(isAssignedTo({ staffMember: { value: { id: null } } }, null)).toBe(false);
 });
